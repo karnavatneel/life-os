@@ -2,9 +2,10 @@ import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router';
 import { useApp } from '@/lib/store';
 import { useThemeEffect } from '@/lib/ui';
-import { useIntegrations, refreshAllIntegrations, fetchSpotifyNowPlaying, refreshSpotifyToken } from '@/lib/integrations';
+import { useIntegrations, refreshAllIntegrations, fetchSpotifyNowPlaying, refreshSpotifyToken, refreshGoogleToken, fetchGmailMessages, fetchDriveStorage, fetchGoogleCalendar } from '@/lib/integrations';
 import { mode, supabase } from '@/lib/supabase';
-import { requestNotificationPermission, registerPeriodicSync, syncScheduleToSW, buildDailyFireAt } from '@/lib/notifications';
+import { requestNotificationPermission, registerPeriodicSync, syncScheduleToSW, buildDailyFireAt, notificationsGranted } from '@/lib/notifications';
+import { subscribeToPush } from '@/lib/push';
 import AppLayout from '@/components/layout/AppLayout';
 import Onboarding from '@/pages/Onboarding';
 import Dashboard from '@/pages/Dashboard';
@@ -72,6 +73,7 @@ export default function App() {
           useApp.getState().completeOnboarding(name);
           if (event === 'SIGNED_IN') {
             restoreBackup(session.user.id);
+            if (notificationsGranted()) subscribeToPush();
           }
         } else if (event === 'SIGNED_OUT') {
           // Clear all local states so next user doesn't see them
@@ -88,9 +90,9 @@ export default function App() {
   useEffect(() => {
     refreshAllIntegrations(useIntegrations.getState(), useApp.getState().updateHealth);
 
-    // Also refresh Spotify every 30s if playing
+    // Also refresh Spotify every 30s if playing, and keep the Google token fresh
     const interval = setInterval(() => {
-      const { spotifyTokens, setSpotifyTrack, setSpotifyTokens, config } = useIntegrations.getState();
+      const { spotifyTokens, setSpotifyTrack, setSpotifyTokens, googleTokens, setGoogleTokens, setGmailMessages, setDriveStorage, setGoogleCalendarEvents, config } = useIntegrations.getState();
       if (spotifyTokens) {
         const isValid = spotifyTokens.expires_at > Date.now() + 30_000;
         if (isValid) {
@@ -106,6 +108,21 @@ export default function App() {
             .catch(() => null);
         }
       }
+      if (googleTokens) {
+        const isValid = googleTokens.expires_at > Date.now() + 60_000;
+        if (!isValid && googleTokens.refresh_token) {
+          refreshGoogleToken(googleTokens.refresh_token)
+            .then((newToken) => {
+              if (newToken) {
+                setGoogleTokens(newToken);
+                fetchGmailMessages(newToken).then(setGmailMessages).catch(() => null);
+                fetchDriveStorage(newToken).then(setDriveStorage).catch(() => null);
+                fetchGoogleCalendar(newToken).then(setGoogleCalendarEvents).catch(() => null);
+              }
+            })
+            .catch(() => null);
+        }
+      }
     }, 30_000);
 
     return () => clearInterval(interval);
@@ -116,6 +133,7 @@ export default function App() {
     requestNotificationPermission().then((granted) => {
       if (!granted) return;
       registerPeriodicSync();
+      subscribeToPush();
 
       const syncAll = (state: ReturnType<typeof useApp.getState>) => {
         const { habits, medicines, tasks, events } = state;

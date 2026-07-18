@@ -51,32 +51,11 @@ class ErrorBoundary extends Component<
   }
 }
 
-import { useIntegrations } from './lib/integrations';
-
-if (typeof window !== 'undefined') {
-  const hash = window.location.hash;
-
-  // Google OAuth (Implicit Grant) uses hash
-  if (hash.includes('access_token')) {
-    const p = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
-    if (p.get('access_token')) {
-      const expires_in_sec = parseInt(p.get('expires_in') || '3600', 10);
-      useIntegrations.getState().setGoogleTokens({
-        access_token: p.get('access_token') || '',
-        expires_at: Date.now() + (isNaN(expires_in_sec) ? 3600 : expires_in_sec) * 1000,
-        scope: p.get('scope') || '',
-      });
-    }
-    // If it's a popup with an opener, let the opener read it, otherwise clear it so HashRouter doesn't freak out.
-    if (!window.opener) {
-      window.history.replaceState(null, '', window.location.pathname + '#/integrations');
-    }
-  }
-
-  // Spotify OAuth uses search params (code) - wait, this needs an async fetch to exchange code for token.
-  // The easiest fix for Spotify on mobile is to store the code and let the integrations page handle it, or we handle it in App.tsx.
-  // Actually, if we just let the popup logic run in the opener, it's fine. For now, let's just make sure we don't break Google.
-}
+// Google now uses Authorization Code + PKCE (like Spotify already did), so
+// the redirect carries `?code=&state=` in the query string, not `#access_token`
+// in the hash. Both are read directly by the opener window's popup poller in
+// connectGoogle() / connectSpotify() (see src/lib/integrations.ts), so this
+// window just needs to render a lightweight placeholder — see isOauthPopup below.
 
 const isOauthPopup = typeof window !== 'undefined' && 
   window.opener && 

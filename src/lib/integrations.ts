@@ -1,17 +1,24 @@
 /**
- * integrations.ts — Google OAuth2 (Gmail, Drive, Calendar) + Spotify Web API
- * All integrations use PKCE / implicit grant flows (no backend needed).
- * Data is stored in localStorage under 'life-os-integrations'.
+ * integrations.ts — Google OAuth2 (Gmail, Drive, Calendar, Fit) + Spotify Web API
+ * Both now use Authorization Code + PKCE with real refresh tokens. Google's
+ * token endpoint requires a client_secret even with PKCE, so the code<->token
+ * exchange and refresh happen through the `google-oauth` Supabase Edge
+ * Function (see supabase/functions/google-oauth) — the secret never reaches
+ * the browser. Spotify's endpoint accepts PKCE without a secret, so that
+ * exchange still happens directly from the client.
+ * Tokens are stored in localStorage under 'life-os-integrations'.
  */
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { supabase, isSupabaseConfigured } from './supabase';
 
 /* ─────────────────────────────────────────────────────────────
    TYPES
 ───────────────────────────────────────────────────────────── */
 export interface GoogleTokens {
   access_token: string;
+  refresh_token?: string;
   expires_at: number; // unix ms
   scope: string;
 }
@@ -270,67 +277,139 @@ export async function connectGoogle(clientId: string): Promise<GoogleTokens | nu
     alert('Please enter your Google Client ID in Settings → Integrations first.');
     return null;
   }
-  const state = Math.random().toString(36).slice(2);
+  if (!isSupabaseConfigured) {
+    alert('Google sign-in needs Supabase configured (the google-oauth Edge Function does the token exchange securely). Add VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY first.');
+    return null;
+  }
+
+  const state = generateRandomString(24);
+  const verifier = generateRandomString(64);
+  const challenge = await generateCodeChallenge(verifier);
   sessionStorage.setItem('google_state', state);
+  sessionStorage.setItem('google_verifier', verifier);
 
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: REDIRECT,
-    response_type: 'token',
+    response_type: 'code',
     scope: GOOGLE_SCOPES,
     state,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    access_type: 'offline',      // required to get a refresh_token
+    prompt: 'consent',           // forces Google to re-issue the refresh_token every time
     include_granted_scopes: 'true',
   });
 
   return new Promise((resolve) => {
     const popup = openPopup(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
     let elapsed = 0;
-    
-    const timer = setInterval(() => {
+    let settled = false;
+
+    const timer = setInterval(async () => {
       elapsed += 300;
-      
-      // 60-second timeout
-      if (elapsed > 60000) {
+
+      // 90-second timeout (consent screen takes longer than a plain login)
+      if (elapsed > 90000) {
         clearInterval(timer);
         if (popup && !popup.closed) popup.close();
-        alert('Google Connection Timeout.\n\nMake sure your Google Cloud Console settings are correct:\n1. The Authorized Redirect URI must exactly match your app URL (including trailing /).\n2. If your OAuth screen is in "Testing" mode, add your email as a Test User.');
-        resolve(null);
+        if (!settled) {
+          settled = true;
+          alert('Google Connection Timeout.\n\nMake sure your Google Cloud Console settings are correct:\n1. The Authorized Redirect URI must exactly match your app URL (including trailing /).\n2. If your OAuth screen is in "Testing" mode, add your email as a Test User.');
+          resolve(null);
+        }
         return;
       }
 
       try {
-        if (!popup || popup.closed) { clearInterval(timer); resolve(null); return; }
-        const hash = popup.location.hash;
-        const search = popup.location.search;
-
-        // Check for Google OAuth redirect error
-        if ((hash && hash.includes('error=')) || (search && search.includes('error='))) {
+        if (!popup || popup.closed) {
           clearInterval(timer);
-          const p = new URLSearchParams(hash ? hash.slice(1) : search);
+          if (!settled) { settled = true; resolve(null); }
+          return;
+        }
+        const search = popup.location.search;
+        if (!search) return;
+        const p = new URLSearchParams(search);
+
+        if (p.has('error')) {
+          clearInterval(timer);
           const err = p.get('error') || 'unknown_error';
           const desc = p.get('error_description') || '';
           popup.close();
-          alert(`Google OAuth Error: ${err}\nDescription: ${desc}\n\nMake sure you added the correct Redirect URI to your Google Cloud Console.`);
-          resolve(null);
+          if (!settled) {
+            settled = true;
+            alert(`Google OAuth Error: ${err}\nDescription: ${desc}\n\nMake sure you added the correct Redirect URI to your Google Cloud Console.`);
+            resolve(null);
+          }
           return;
         }
 
-        if (hash && hash.includes('access_token')) {
+        if (p.has('code')) {
           clearInterval(timer);
           popup.close();
-          const p = new URLSearchParams(hash.slice(1));
-          
-          const expires_in_sec = parseInt(p.get('expires_in') || '3600', 10);
-          const token: GoogleTokens = {
-            access_token: p.get('access_token') ?? '',
-            expires_at: Date.now() + (isNaN(expires_in_sec) ? 3600 : expires_in_sec) * 1000,
-            scope: p.get('scope') ?? '',
-          };
-          resolve(token);
+          if (settled) return;
+          settled = true;
+
+          const returnedState = p.get('state');
+          const expectedState = sessionStorage.getItem('google_state');
+          sessionStorage.removeItem('google_state');
+          if (!returnedState || returnedState !== expectedState) {
+            alert('Google sign-in failed a security check (state mismatch). Please try connecting again.');
+            resolve(null);
+            return;
+          }
+
+          const code = p.get('code') ?? '';
+          const verifierVal = sessionStorage.getItem('google_verifier') ?? '';
+          sessionStorage.removeItem('google_verifier');
+
+          const tokens = await exchangeGoogleCode(code, verifierVal);
+          resolve(tokens);
         }
-      } catch { /* cross-origin — wait */ }
+      } catch { /* cross-origin while on accounts.google.com — keep waiting */ }
     }, 300);
   });
+}
+
+async function callGoogleOAuthFunction(body: Record<string, string>): Promise<any> {
+  if (!supabase) throw new Error('Supabase not configured');
+  const { data, error } = await supabase.functions.invoke('google-oauth', { body });
+  if (error) throw error;
+  return data;
+}
+
+async function exchangeGoogleCode(code: string, verifier: string): Promise<GoogleTokens | null> {
+  try {
+    const data = await callGoogleOAuthFunction({ action: 'exchange', code, code_verifier: verifier, redirect_uri: REDIRECT });
+    if (!data?.access_token) throw new Error(data?.error_description || 'No access token returned');
+    return {
+      access_token: data.access_token,
+      refresh_token: data.refresh_token, // only present when prompt=consent granted a new one
+      expires_at: Date.now() + (data.expires_in ?? 3600) * 1000,
+      scope: data.scope ?? GOOGLE_SCOPES,
+    };
+  } catch (e) {
+    console.error('Google code exchange failed:', e);
+    alert('Failed to complete Google sign-in. Make sure the "google-oauth" Supabase Edge Function is deployed with GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET set.');
+    return null;
+  }
+}
+
+/** Silently exchanges a refresh_token for a fresh access_token. Called from refreshAllIntegrations. */
+export async function refreshGoogleToken(refreshToken: string): Promise<GoogleTokens | null> {
+  try {
+    const data = await callGoogleOAuthFunction({ action: 'refresh', refresh_token: refreshToken });
+    if (!data?.access_token) return null;
+    return {
+      access_token: data.access_token,
+      refresh_token: refreshToken, // Google doesn't rotate refresh tokens on refresh grant
+      expires_at: Date.now() + (data.expires_in ?? 3600) * 1000,
+      scope: data.scope ?? GOOGLE_SCOPES,
+    };
+  } catch (e) {
+    console.error('Google token refresh failed:', e);
+    return null;
+  }
 }
 
 async function gFetch(path: string, token: string, params?: Record<string, string>) {
@@ -685,30 +764,44 @@ export async function refreshAllIntegrations(store: ReturnType<typeof useIntegra
     });
 
   // google
-  if (googleTokens && isTokenValid(googleTokens)) {
-    store.setGoogleLoading(true);
-    
+  const loadGoogleData = (tokens: GoogleTokens) => {
     if (updateHealth) {
-      fetchGoogleFitData(googleTokens)
+      fetchGoogleFitData(tokens)
         .then((fit) => {
           if (fit) {
             const today = new Date().toISOString().split('T')[0];
             updateHealth(today, {
               steps: fit.steps || undefined,
-              calories: fit.calories || undefined
+              calories: fit.calories || undefined,
             });
           }
         })
         .catch((err) => console.error('Google Fit load failed:', err));
     }
 
-    Promise.all([
-      fetchGmailMessages(googleTokens).then(store.setGmailMessages),
-      fetchDriveStorage(googleTokens).then(store.setDriveStorage),
-      fetchGoogleCalendar(googleTokens).then(store.setGoogleCalendarEvents),
-    ])
-      .catch((err) => console.error('Google loader failed:', err))
-      .finally(() => store.setGoogleLoading(false));
+    return Promise.all([
+      fetchGmailMessages(tokens).then(store.setGmailMessages),
+      fetchDriveStorage(tokens).then(store.setDriveStorage),
+      fetchGoogleCalendar(tokens).then(store.setGoogleCalendarEvents),
+    ]).catch((err) => console.error('Google loader failed:', err));
+  };
+
+  if (googleTokens) {
+    if (!isTokenValid(googleTokens) && googleTokens.refresh_token) {
+      store.setGoogleLoading(true);
+      refreshGoogleToken(googleTokens.refresh_token)
+        .then((newToken) => {
+          if (newToken) {
+            store.setGoogleTokens(newToken);
+            return loadGoogleData(newToken);
+          }
+        })
+        .catch((err) => console.error('Google token refresh failed:', err))
+        .finally(() => store.setGoogleLoading(false));
+    } else if (isTokenValid(googleTokens)) {
+      store.setGoogleLoading(true);
+      loadGoogleData(googleTokens).finally(() => store.setGoogleLoading(false));
+    }
   }
 
   // spotify

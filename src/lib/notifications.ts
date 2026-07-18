@@ -1,9 +1,12 @@
 /**
- * Notification helper — bridges the React app to the Service Worker.
+ * Notification helper — bridges the React app to the Service Worker AND,
+ * when Supabase is configured, to a server-side schedule so notifications
+ * still fire via real Web Push when the app/browser is fully closed.
  *
  * Usage:
  *   import { requestNotificationPermission, scheduleNotification, cancelNotification, syncScheduleToSW } from '@/lib/notifications';
  */
+import { supabase, isSupabaseConfigured } from './supabase';
 
 // ─── Permission ───────────────────────────────────────────────────────────────
 export async function requestNotificationPermission(): Promise<boolean> {
@@ -56,10 +59,57 @@ export async function cancelNotification(id: string) {
 
 /**
  * Call this whenever the schedule changes so the SW has the latest list
- * for periodic background sync (fires even when app is closed).
+ * for periodic background sync (best-effort, works while the browser
+ * keeps the SW alive), AND so the server-side schedule used for real Web
+ * Push delivery (works even when the app is fully closed / killed) stays
+ * in sync.
  */
 export async function syncScheduleToSW(schedule: ScheduledNotification[]) {
   await sendToSW({ type: 'SYNC_SCHEDULE', schedule });
+  await syncScheduleToServer(schedule);
+}
+
+/**
+ * Upserts the (future, unfired) schedule into public.scheduled_notifications
+ * and removes any rows that are no longer part of the schedule (e.g. a habit
+ * reminder was turned off). No-ops if Supabase isn't configured or the user
+ * isn't logged in — the local SW path still works in that case.
+ */
+async function syncScheduleToServer(schedule: ScheduledNotification[]) {
+  if (!isSupabaseConfigured || !supabase) return;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return;
+    const userId = session.user.id;
+
+    const upcoming = schedule.filter((n) => n.fireAt > Date.now());
+    if (upcoming.length > 0) {
+      const { error } = await supabase.from('scheduled_notifications').upsert(
+        upcoming.map((n) => ({
+          id: n.id,
+          user_id: userId,
+          title: n.title,
+          body: n.body,
+          fire_at: new Date(n.fireAt).toISOString(),
+          fired: false,
+        })),
+      );
+      if (error) throw error;
+    }
+
+    // Remove stale rows for ids no longer in the schedule (e.g. reminder disabled).
+    const { data: existing } = await supabase
+      .from('scheduled_notifications')
+      .select('id')
+      .eq('user_id', userId);
+    const keepIds = new Set(upcoming.map((n) => n.id));
+    const staleIds = (existing ?? []).map((r) => r.id).filter((id) => !keepIds.has(id));
+    if (staleIds.length > 0) {
+      await supabase.from('scheduled_notifications').delete().in('id', staleIds);
+    }
+  } catch (e) {
+    console.error('Failed to sync notification schedule to server:', e);
+  }
 }
 
 // ─── Register periodic sync ───────────────────────────────────────────────────

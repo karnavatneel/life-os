@@ -1,4 +1,4 @@
-const CACHE = 'life-os-v5';
+const CACHE = 'life-os-v6';
 const PRECACHE = ['/manifest.webmanifest', '/icon.svg'];
 
 let lastNotifCheck = 0;
