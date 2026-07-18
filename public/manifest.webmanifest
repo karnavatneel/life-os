@@ -1,0 +1,30 @@
+{
+  "name": "Life OS — Your Self-Development Hub",
+  "short_name": "Life OS",
+  "description": "All-in-one habit tracker, planner, finance, health, focus timer, AI coach and more.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0e17",
+  "theme_color": "#7c5cfc",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "lifestyle", "health"],
+  "shortcuts": [
+    { "name": "Add Habit", "short_name": "Habit", "url": "/habits?add=1", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Focus Timer", "short_name": "Focus", "url": "/focus?start=1", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Add Expense", "short_name": "Finance", "url": "/finance?add=expense", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
