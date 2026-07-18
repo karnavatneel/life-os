@@ -56,10 +56,10 @@ select cron.schedule(
   '* * * * *',
   $$
   select net.http_post(
-    url := 'https://YOUR-PROJECT.supabase.co/functions/v1/send-due-notifications',
+    url := 'https://wboxnegvqortidfrkckc.supabase.co/functions/v1/send-due-notifications',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'x-cron-secret', 'REPLACE-WITH-THE-SAME-VALUE-YOU-SET-AS-THE-CRON_SECRET-FUNCTION-SECRET'
+      'x-cron-secret', 'cron_secret_7f8a9b2c3d4e'
     ),
     body := '{}'::jsonb
   );
