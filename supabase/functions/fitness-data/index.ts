@@ -97,16 +97,40 @@ Deno.serve(async (req) => {
 
       if (sleepRes.ok) {
         const sleepData = await sleepRes.json();
-        if (sleepData.session) {
+        if (sleepData.session && sleepData.session.length > 0) {
+          const intervals: { start: number; end: number }[] = [];
+          
           sleepData.session.forEach((sess: any) => {
             const endMs = parseInt(sess.endTimeMillis);
-            // Only count sleep sessions that ended during today's local timezone window
+            const startMs = parseInt(sess.startTimeMillis);
+            
+            // Only capture sessions that end inside today's timezone window
             if (endMs >= startOfToday && endMs <= endOfToday) {
-              const startMs = parseInt(sess.startTimeMillis);
-              const durationHours = (endMs - startMs) / (1000 * 60 * 60);
-              sleepHours += parseFloat(durationHours.toFixed(1));
+              intervals.push({ start: startMs, end: endMs });
             }
           });
+
+          if (intervals.length > 0) {
+            // Sort intervals by start time
+            intervals.sort((a, b) => a.start - b.start);
+
+            // Merge overlapping intervals (classic interval merging algorithm)
+            const merged: { start: number; end: number }[] = [];
+            for (const interval of intervals) {
+              if (merged.length === 0 || merged[merged.length - 1].end <= interval.start) {
+                merged.push(interval);
+              } else {
+                merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, interval.end);
+              }
+            }
+
+            // Sum durations of merged intervals
+            let totalMs = 0;
+            merged.forEach(interval => {
+              totalMs += (interval.end - interval.start);
+            });
+            sleepHours = parseFloat((totalMs / (1000 * 60 * 60)).toFixed(1));
+          }
         }
       }
     } catch (err) {
