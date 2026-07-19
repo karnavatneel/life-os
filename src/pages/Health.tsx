@@ -31,7 +31,8 @@ function SyncedStat({ label, emoji, value, unit }: { label: string; emoji: strin
   );
 }
 
-function Stepper({ label, emoji, value, onChange, step = 1, min = 0, max = 999, unit }: { label: string; emoji: string; value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; unit?: string }) {
+function Stepper({ label, emoji, value, onChange, step = 1, min = 0, max = 999, unit }: { label: string; emoji: string; value: number | null | undefined; onChange: (v: number) => void; step?: number; min?: number; max?: number; unit?: string }) {
+  const numValue = value ?? 0;
   return (
     <div className="flex items-center justify-between py-2.5">
       <div className="flex items-center gap-2.5">
@@ -39,9 +40,9 @@ function Stepper({ label, emoji, value, onChange, step = 1, min = 0, max = 999, 
         <span className="text-sm font-medium">{label}</span>
       </div>
       <div className="flex items-center gap-2">
-        <button onClick={() => onChange(Math.max(min, +(value - step).toFixed(1)))} className="w-8 h-8 rounded-xl glass flex items-center justify-center press"><Minus className="w-4 h-4" /></button>
-        <span className="w-16 text-center font-bold tabular-nums">{value}{unit && <span className="text-xs text-muted-foreground font-normal ml-0.5">{unit}</span>}</span>
-        <button onClick={() => onChange(Math.min(max, +(value + step).toFixed(1)))} className="w-8 h-8 rounded-xl glass flex items-center justify-center press"><Plus className="w-4 h-4" /></button>
+        <button onClick={() => onChange(Math.max(min, +(numValue - step).toFixed(1)))} className="w-8 h-8 rounded-xl glass flex items-center justify-center press"><Minus className="w-4 h-4" /></button>
+        <span className="w-16 text-center font-bold tabular-nums">{numValue}{unit && <span className="text-xs text-muted-foreground font-normal ml-0.5">{unit}</span>}</span>
+        <button onClick={() => onChange(Math.min(max, +(numValue + step).toFixed(1)))} className="w-8 h-8 rounded-xl glass flex items-center justify-center press"><Plus className="w-4 h-4" /></button>
       </div>
     </div>
   );

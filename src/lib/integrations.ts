@@ -742,9 +742,9 @@ export async function refreshAllIntegrations(store: ReturnType<typeof useIntegra
           if (fit) {
             const today = new Date().toISOString().split('T')[0];
             updateHealth(today, {
-              steps: fit.steps || undefined,
-              calories: fit.calories || undefined,
-              sleepHours: fit.sleepHours || undefined,
+              steps: fit.steps !== undefined ? fit.steps : undefined,
+              calories: fit.calories !== undefined ? fit.calories : undefined,
+              sleepHours: fit.sleepHours !== undefined ? fit.sleepHours : undefined,
             });
           }
         })
