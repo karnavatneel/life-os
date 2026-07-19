@@ -206,66 +206,25 @@ export async function fetchGoogleFitData(tokens: GoogleTokens): Promise<GoogleFi
   }
 
   try {
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const endOfToday = new Date();
-    endOfToday.setHours(23, 59, 59, 999);
-
-    const body = {
-      aggregateBy: [
-        { dataTypeName: 'com.google.step_count.delta' },
-        { dataTypeName: 'com.google.calories.expended' }
-      ],
-      bucketByTime: { durationMillis: 86400000 },
-      startTimeMillis: startOfToday.getTime(),
-      endTimeMillis: endOfToday.getTime()
-    };
-
-    const res = await fetch('https://www.googleapis.com/fitness/v1/users/me/dataset/aggregate', {
+    // Route through Supabase Edge Function to avoid CORS restrictions.
+    // The Google Fitness REST API blocks direct browser requests.
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const res = await fetch(`${supabaseUrl}/functions/v1/fitness-data`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${tokens.access_token}`
-      },
-      body: JSON.stringify(body)
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ access_token: tokens.access_token }),
     });
 
-    if (!res.ok) throw new Error(`Google Fit error: ${res.status}`);
-    const data = await res.json();
-    
-    let steps = 0;
-    let calories = 0;
-
-    if (data.bucket && data.bucket.length > 0) {
-      const bucket = data.bucket[0];
-      if (bucket.dataset) {
-        // Dataset array matches the aggregateBy array order
-        const stepDataset = bucket.dataset[0];
-        const calorieDataset = bucket.dataset[1];
-
-        if (stepDataset?.point) {
-          stepDataset.point.forEach((pt: any) => {
-            if (pt.value) {
-              pt.value.forEach((val: any) => {
-                steps += val.intVal ?? 0;
-              });
-            }
-          });
-        }
-
-        if (calorieDataset?.point) {
-          calorieDataset.point.forEach((pt: any) => {
-            if (pt.value) {
-              pt.value.forEach((val: any) => {
-                calories += Math.round(val.fpVal ?? 0);
-              });
-            }
-          });
-        }
-      }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(`Fitness proxy error: ${res.status} - ${err.error ?? ''}`);
     }
 
-    return { steps, calories };
+    const data = await res.json();
+    return {
+      steps: data.steps ?? 0,
+      calories: data.calories ?? 0,
+    };
   } catch (e) {
     console.error('Failed to fetch Google Fit data:', e);
     return null;
