@@ -188,6 +188,7 @@ const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/fitness.activity.read',
   'https://www.googleapis.com/auth/fitness.body.read',
+  'https://www.googleapis.com/auth/fitness.sleep.read',
   'profile',
   'email',
 ].join(' ');
@@ -195,6 +196,7 @@ const GOOGLE_SCOPES = [
 export interface GoogleFitData {
   steps: number;
   calories: number;
+  sleepHours?: number;
 }
 
 export async function fetchGoogleFitData(tokens: GoogleTokens): Promise<GoogleFitData | null> {
@@ -233,6 +235,7 @@ export async function fetchGoogleFitData(tokens: GoogleTokens): Promise<GoogleFi
     return {
       steps: data.steps ?? 0,
       calories: data.calories ?? 0,
+      sleepHours: data.sleepHours ?? 0,
     };
   } catch (e) {
     console.error('Failed to fetch Google Fit data:', e);
@@ -741,6 +744,7 @@ export async function refreshAllIntegrations(store: ReturnType<typeof useIntegra
             updateHealth(today, {
               steps: fit.steps || undefined,
               calories: fit.calories || undefined,
+              sleepHours: fit.sleepHours || undefined,
             });
           }
         })

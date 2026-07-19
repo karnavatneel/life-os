@@ -80,7 +80,40 @@ Deno.serve(async (req) => {
       }
     }
 
-    return json({ steps, calories }, 200);
+    // --- FETCH SLEEP DATA ---
+    let sleepHours = 0;
+    try {
+      const sleepStart = new Date(startOfToday - 18 * 60 * 60 * 1000).toISOString();
+      const sleepEnd = new Date(endOfToday).toISOString();
+      
+      const sleepRes = await fetch(
+        `https://www.googleapis.com/fitness/v1/users/me/sessions?activityType=72&startTime=${sleepStart}&endTime=${sleepEnd}`,
+        {
+          headers: {
+            Authorization: `Bearer ${access_token}`,
+          },
+        }
+      );
+
+      if (sleepRes.ok) {
+        const sleepData = await sleepRes.json();
+        if (sleepData.session) {
+          sleepData.session.forEach((sess: any) => {
+            const endMs = parseInt(sess.endTimeMillis);
+            // Only count sleep sessions that ended during today's local timezone window
+            if (endMs >= startOfToday && endMs <= endOfToday) {
+              const startMs = parseInt(sess.startTimeMillis);
+              const durationHours = (endMs - startMs) / (1000 * 60 * 60);
+              sleepHours += parseFloat(durationHours.toFixed(1));
+            }
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch sleep sessions:', err);
+    }
+
+    return json({ steps, calories, sleepHours }, 200);
   } catch (e) {
     return json({ error: 'internal_error', detail: String(e) }, 500);
   }
