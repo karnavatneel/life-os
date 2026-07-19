@@ -18,17 +18,15 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { access_token } = await req.json();
+    const { access_token, startTimeMillis, endTimeMillis } = await req.json();
 
     if (!access_token) {
       return json({ error: 'access_token is required' }, 400);
     }
 
     const now = new Date();
-    const startOfToday = new Date(now);
-    startOfToday.setHours(0, 0, 0, 0);
-    const endOfToday = new Date(now);
-    endOfToday.setHours(23, 59, 59, 999);
+    const startOfToday = startTimeMillis ?? new Date(now.setHours(0, 0, 0, 0)).getTime();
+    const endOfToday = endTimeMillis ?? new Date(now.setHours(23, 59, 59, 999)).getTime();
 
     const body = {
       aggregateBy: [
@@ -36,8 +34,8 @@ Deno.serve(async (req) => {
         { dataTypeName: 'com.google.calories.expended' },
       ],
       bucketByTime: { durationMillis: 86400000 },
-      startTimeMillis: startOfToday.getTime(),
-      endTimeMillis: endOfToday.getTime(),
+      startTimeMillis: startOfToday,
+      endTimeMillis: endOfToday,
     };
 
     const res = await fetch(

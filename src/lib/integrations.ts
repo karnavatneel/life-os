@@ -206,13 +206,22 @@ export async function fetchGoogleFitData(tokens: GoogleTokens): Promise<GoogleFi
   }
 
   try {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const endOfToday = new Date();
+    endOfToday.setHours(23, 59, 59, 999);
+
     // Route through Supabase Edge Function to avoid CORS restrictions.
     // The Google Fitness REST API blocks direct browser requests.
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
     const res = await fetch(`${supabaseUrl}/functions/v1/fitness-data`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ access_token: tokens.access_token }),
+      body: JSON.stringify({
+        access_token: tokens.access_token,
+        startTimeMillis: startOfToday.getTime(),
+        endTimeMillis: endOfToday.getTime(),
+      }),
     });
 
     if (!res.ok) {
