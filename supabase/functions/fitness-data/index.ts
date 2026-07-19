@@ -41,7 +41,7 @@ Deno.serve(async (req) => {
     };
 
     const res = await fetch(
-      'https://www.googleapis.com/fitness/v1/users/me/dataset/aggregate',
+      'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate',
       {
         method: 'POST',
         headers: {
@@ -53,8 +53,8 @@ Deno.serve(async (req) => {
     );
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'fitness_api_error' }));
-      return json({ error: err.error?.message ?? 'fitness_api_error', status: res.status }, res.status);
+      const errText = await res.text().catch(() => 'Could not read error response');
+      return json({ error: errText, status: res.status }, res.status);
     }
 
     const data = await res.json();
